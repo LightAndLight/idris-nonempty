@@ -2,6 +2,8 @@
 
 ||| A "container" is non-empty if,
 ||| It is isomorphic to List X, and calling toList on it returns a cons-cell
+|||
+||| Wrong?
 
 record Iso a b where
   constructor MkIso
@@ -54,20 +56,15 @@ data NonEmpty : {a : Type} -> a -> Type where
     -> (is_nonempty : Cons (to list_iso e))
     -> NonEmpty e
 
-postulate cons_correct_1 : (x : Char) -> (xs : String) -> unpack (strCons x xs) = x :: unpack xs
+||| I think this needs to be postulates because 'strCons' is a primitive
+postulate unpackStrCons_consUnpack : (x : Char) -> (xs : String) -> unpack (strCons x xs) = x :: unpack xs
 
-cons_correct_2 : (x : Char) -> (xs : List Char) -> x :: xs = unpack (strCons x (pack xs))
-cons_correct_2 x [] = rewrite cons_correct_1 x "" in Refl
-cons_correct_2 x (a :: as) =
-  rewrite cons_correct_2 a as in
-  rewrite cons_correct_1 x (strCons a (pack as)) in
+cons_unpackStrConsPack : (x : Char) -> (xs : List Char) -> x :: xs = unpack (strCons x (pack xs))
+cons_unpackStrConsPack x [] = rewrite unpackStrCons_consUnpack x "" in Refl
+cons_unpackStrConsPack x (a :: as) =
+  rewrite cons_unpackStrConsPack a as in
+  rewrite unpackStrCons_consUnpack x (strCons a (pack as)) in
   Refl
-
-uncons : String -> Maybe (Char, String)
-uncons a =
-  case unpack a of
-    [] => Nothing
-    x :: xs => Just (x, pack xs)
 
 strListIso : Iso String (List Char)
 strListIso =
@@ -87,17 +84,31 @@ where
 
   unpack_pack_id : (x : List Char) -> unpack (pack x) = x
   unpack_pack_id [] = Refl
-  unpack_pack_id (x :: xs) = rewrite sym (cons_correct_2 x xs) in Refl
-
-%language ElabReflection
-
-nonEmpty_emptyStr_impossible : NonEmpty "" -> Void
-nonEmpty_emptyStr_impossible (MkNonEmpty "" _ iso isCons) =
-  %runElab (do
-    debug {a=()}
-    )
+  unpack_pack_id (x :: xs) = rewrite sym (cons_unpackStrConsPack x xs) in Refl
 
 decStringNonEmpty : (s : String) -> Dec (NonEmpty s)
 decStringNonEmpty s with (strM s)
+  decStringNonEmpty (strCons a rest) | StrCons a rest =
+    Yes $ MkNonEmpty (strCons a rest) Char strListIso (rewrite unpackStrCons_consUnpack a rest in IsCons)
   decStringNonEmpty "" | StrNil = No nonEmpty_emptyStr_impossible
-  decStringNonEmpty (strCons a rest) | StrCons a rest = ?h1
+  where
+    nonEmpty_emptyStr_impossible : NonEmpty "" -> Void
+    nonEmpty_emptyStr_impossible (MkNonEmpty "" ty iso isCons) = absurd contradiction
+      where
+        implication : Cons (to iso "") -> (x : ty ** xs : List ty ** to iso "" = x :: xs)
+        implication a with (to iso "")
+          implication a | [] = absurd a
+          implication a | (x :: xs) = (x ** xs ** Refl)
+
+        -- we have a proof that 'to iso "" = x :: xs'
+        --
+        -- and because of congruence of equality
+        -- 'from iso (to iso "") = from iso (x :: xs)'
+        --
+        -- but this states that
+        --
+        -- "" = from iso (x :: xs), which results in a non-empty string
+        contradiction : Void
+        contradiction =
+          case implication isCons of
+            (_ ** _ ** prf) => case cong {f=from iso} prf of Refl impossible
